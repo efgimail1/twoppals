@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: twoppals_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-twoppals}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-twoppals}
+      POSTGRES_DB: ${DB_NAME:-twoppals}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - twoppals_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-twoppals}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: twoppals_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-twoppals}:${DB_PASSWORD:-twoppals}@db:5432/${DB_NAME:-twoppals}
+    ports:
+      - "${BACKEND_PORT:-1001}:1001"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 1001 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: twoppals_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:1001}
+    ports:
+      - "${FRONTEND_PORT:-9001}:9001"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  twoppals_pgdata:
