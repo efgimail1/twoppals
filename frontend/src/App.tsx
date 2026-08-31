@@ -5,9 +5,11 @@ import Login from "./routes/Login";
 import Resep from "./routes/cobi-kerupuk/Resep";
 import Produk from "./routes/cobi-kerupuk/Produk";
 import BahanBaku from "./routes/cobi-kerupuk/BahanBaku";
+import Kemasan from "./routes/cobi-kerupuk/Kemasan";
 import OverheadPage from "./routes/cobi-kerupuk/Overhead";
 import CustomerPage from "./routes/cobi-kerupuk/Customer";
 import Pemesanan from "./routes/cobi-kerupuk/Pemesanan";
+import PemesananForm from "./routes/cobi-kerupuk/PemesananForm";
 
 function PlaceholderPage({ title }: { title: string }) {
   return <div style={{ padding: 24 }}><h2 style={{ fontSize: 18, fontWeight: 500 }}>{title}</h2></div>;
@@ -33,7 +35,10 @@ export default function App() {
           <Route path="/cobi-kerupuk/produk" element={<Produk />} />
           <Route path="/cobi-kerupuk/customer" element={<CustomerPage />} />
           <Route path="/cobi-kerupuk/pemesanan" element={<Pemesanan />} />
+          <Route path="/cobi-kerupuk/pemesanan/baru" element={<PemesananForm />} />
+          <Route path="/cobi-kerupuk/pemesanan/:id" element={<PemesananForm />} />
           <Route path="/cobi-kerupuk/bahan-baku" element={<BahanBaku />} />
+          <Route path="/cobi-kerupuk/kemasan" element={<Kemasan />} />
           <Route path="/cobi-kerupuk/resep" element={<Resep />} />
           <Route path="/cobi-kerupuk/overhead" element={<OverheadPage />} />
           <Route path="/cobi-kerupuk/stok" element={<PlaceholderPage title="Stok" />} />

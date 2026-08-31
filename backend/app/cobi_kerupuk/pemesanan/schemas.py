@@ -24,6 +24,15 @@ class CustomerOut(BaseModel):
 class OrderItemInput(BaseModel):
     product_id: int
     qty: Decimal
+    discount_type: str = "percent"
+    discount_value: Decimal = Decimal("0")
+
+
+class OrderItemUpdate(BaseModel):
+    qty: Decimal
+    unit_price: Decimal
+    discount_type: str = "percent"
+    discount_value: Decimal = Decimal("0")
 
 
 class OrderItemOut(BaseModel):
@@ -32,19 +41,39 @@ class OrderItemOut(BaseModel):
     product_name: str
     qty: Decimal
     unit_price: Decimal
+    discount_type: str
+    discount_value: Decimal
+    discount_amount: Decimal
     subtotal: Decimal
 
 
 class SalesOrderCreate(BaseModel):
     customer_id: int
+    order_date: date
     due_date: date
     shipping_cost: Decimal = Decimal("0")
     notes: str | None = None
     items: list[OrderItemInput]
 
 
+class SalesOrderHeaderUpdate(BaseModel):
+    customer_id: int
+    order_date: date
+    due_date: date
+    shipping_cost: Decimal = Decimal("0")
+    notes: str | None = None
+
+
 class SalesOrderUpdateStatus(BaseModel):
     status: str
+
+
+class StatusLogOut(BaseModel):
+    status: str
+    changed_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class PaymentCreate(BaseModel):
@@ -69,26 +98,28 @@ class SalesOrderListOut(BaseModel):
     id: int
     customer_id: int
     customer_name: str
-    order_date: datetime
+    order_date: date
     due_date: date
     status: str
     total: Decimal
     paid: Decimal
-    payment_status: str  # belum_bayar | dp | lunas
+    payment_status: str
 
 
 class SalesOrderDetailOut(BaseModel):
     id: int
     customer_id: int
     customer_name: str
-    order_date: datetime
+    order_date: date
     due_date: date
     status: str
     shipping_cost: Decimal
     notes: str | None
     items: list[OrderItemOut]
     payments: list[PaymentOut]
+    status_logs: list[StatusLogOut]
     items_total: Decimal
+    total_discount: Decimal
     total: Decimal
     paid: Decimal
     remaining: Decimal

@@ -19,8 +19,39 @@ export interface Ingredient {
   current_price: number;
   yield_percent: number;
   effective_price: number;
+  stock_qty: number;
+  min_stock_qty: number;
+  lead_time_days: number;
   updated_at: string;
   conversions: IngredientConversion[];
+}
+
+export interface UnitReference {
+  reference: Record<string, number>;
+  groups: Record<string, string[]>;
+}
+
+export interface Packaging {
+  id: number;
+  name: string;
+  type: string;
+  current_price: number;
+  is_active: boolean;
+}
+
+export interface ProductPackagingInput {
+  packaging_id: number;
+  qty: number;
+}
+
+export interface ProductPackagingDetail {
+  id: number;
+  packaging_id: number;
+  packaging_name: string;
+  packaging_type: string;
+  unit_price: number;
+  qty: number;
+  subtotal: number;
 }
 
 export interface Product {
@@ -35,6 +66,7 @@ export interface Product {
   stock_qty: number;
   min_stock_qty: number;
   stock_unit: string;
+  packagings: ProductPackagingDetail[];
 }
 
 export interface RecipeGroup {
@@ -70,10 +102,15 @@ export interface ScaledIngredient {
   unit: string;
   qty: number;
   subtotal: number;
+  stock_qty: number;
+  is_sufficient: boolean;
+  shortage_qty: number;
+  purchase_deadline: string | null;
 }
 
 export interface ScaleResult {
   target_grams: number;
+  production_date: string | null;
   ingredients: ScaledIngredient[];
   total_cost: number;
 }
@@ -94,13 +131,33 @@ export const updateCategory = (id: number, data: { name: string; description?: s
 // ---- Bahan baku ----
 export const getIngredients = () => apiGet<Ingredient[]>("/cobi-kerupuk/ingredients");
 
-export const createIngredient = (data: { name: string; unit: string; current_price: number; yield_percent?: number }) =>
-  apiPost<Ingredient>("/cobi-kerupuk/ingredients", data);
+
+export const getUnitReference = () =>
+  apiGet<UnitReference>("/cobi-kerupuk/unit-reference");
+
+export const createIngredient = (data: {
+  name: string;
+  unit: string;
+  current_price: number;
+  yield_percent?: number;
+  min_stock_qty?: number;
+  lead_time_days?: number;
+}) => apiPost<Ingredient>("/cobi-kerupuk/ingredients", data);
 
 export const updateIngredient = (
   id: number,
-  data: { name: string; unit: string; current_price: number; yield_percent: number }
+  data: {
+    name: string;
+    unit: string;
+    current_price: number;
+    yield_percent: number;
+    min_stock_qty: number;
+    lead_time_days: number;
+  }
 ) => apiPatch<Ingredient>(`/cobi-kerupuk/ingredients/${id}`, data);
+
+export const adjustStock = (ingredientId: number, data: { new_qty: number; reason?: string }) =>
+  apiPost<Ingredient>(`/cobi-kerupuk/ingredients/${ingredientId}/stock-adjustment`, data);
 
 export const addIngredientConversion = (ingredientId: number, data: { unit: string; to_base_qty: number }) =>
   apiPost<IngredientConversion>(`/cobi-kerupuk/ingredients/${ingredientId}/conversions`, data);
@@ -111,7 +168,18 @@ export const deleteIngredientConversion = (ingredientId: number, conversionId: n
 export const deleteIngredient = (id: number) =>
   apiDelete<{ permanently_deleted: boolean }>(`/cobi-kerupuk/ingredients/${id}`);
 
+// ---- Kemasan & label ----
+export const getPackagings = () => apiGet<Packaging[]>("/cobi-kerupuk/packagings");
 
+export const createPackaging = (data: { name: string; type: string; current_price: number }) =>
+  apiPost<Packaging>("/cobi-kerupuk/packagings", data);
+
+export const updatePackaging = (
+  id: number,
+  data: { name: string; type: string; current_price: number }
+) => apiPatch<Packaging>(`/cobi-kerupuk/packagings/${id}`, data);
+
+export const deletePackaging = (id: number) => apiDelete(`/cobi-kerupuk/packagings/${id}`);
 
 // ---- Produk ----
 export const getProducts = (categoryId?: number) =>
@@ -126,6 +194,7 @@ export interface ProductInput {
   recipe_group_id?: number;
   selling_price: number;
   stock_unit?: string;
+  packagings?: ProductPackagingInput[];
 }
 
 export const createProduct = (data: ProductInput) => apiPost<Product>("/cobi-kerupuk/products", data);
@@ -141,11 +210,13 @@ export interface ProductSizeInput {
   selling_price: number;
   weight_grams?: number;
   stock_unit: string;
+  packagings?: ProductPackagingInput[];
 }
 
 export const createProductsBulk = (data: {
   category_id: number;
   name: string;
+  recipe_group_id?: number;
   variants: string[];
   sizes: ProductSizeInput[];
 }) => apiPost<Product[]>("/cobi-kerupuk/products/bulk", data);
@@ -175,8 +246,12 @@ export const createRecipeVersion = (
   data: { note?: string; ingredients: { ingredient_id: number; qty: number; unit?: string }[] }
 ) => apiPost<RecipeVersion>(`/cobi-kerupuk/recipe-groups/${groupId}/versions`, data);
 
-export const scaleRecipe = (groupId: number, targetGrams: number) =>
-  apiGet<ScaleResult>(`/cobi-kerupuk/recipe-groups/${groupId}/scale?target_grams=${targetGrams}`);
+export const scaleRecipe = (groupId: number, targetGrams: number, productionDate?: string) =>
+  apiGet<ScaleResult>(
+    `/cobi-kerupuk/recipe-groups/${groupId}/scale?target_grams=${targetGrams}${
+      productionDate ? `&production_date=${productionDate}` : ""
+    }`
+  );
 
 export const simulatePrice = (cogs: number, marginPercent: number) =>
   apiPost<{ selling_price: number }>("/cobi-kerupuk/simulate-price", {
@@ -265,6 +340,7 @@ export interface ProductCogsResult {
   product_id: number;
   ingredient_cogs: number | null;
   overhead_per_gram: number;
+  packaging_cost: number;
   cogs_with_overhead: number | null;
 }
 

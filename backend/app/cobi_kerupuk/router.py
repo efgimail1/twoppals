@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from decimal import Decimal
+from datetime import date
 
 from app.cobi_kerupuk import service
 from app.cobi_kerupuk.models import (
     Ingredient,
     IngredientPriceHistory,
     IngredientUnitConversion,
+    Packaging,
     Product,
     ProductCategory,
     RecipeGroup,
@@ -20,6 +22,9 @@ from app.cobi_kerupuk.schemas import (
     OverheadOut,
     OverheadUpsert,
     OverheadSummaryOut,
+    PackagingCreate,
+    PackagingOut,
+    PackagingUpdate,
     PriceHistoryOut,
     PriceSimulationRequest,
     PriceSimulationResponse,
@@ -36,8 +41,10 @@ from app.cobi_kerupuk.schemas import (
     RecipeVersionDetailOut,
     RecipeVersionOut,
     ScaleResponse,
+    StockAdjustmentInput,
     IngredientUnitConversionInput,
     IngredientUnitConversionOut,
+    UnitReferenceOut,
 )
 from app.core.dependencies import get_current_user
 from app.core.models import User
@@ -125,6 +132,9 @@ def list_ingredients(
                 current_price=ing.current_price,
                 yield_percent=ing.yield_percent,
                 effective_price=service.get_effective_price(ing),
+                stock_qty=ing.stock_qty,
+                min_stock_qty=ing.min_stock_qty,
+                lead_time_days=ing.lead_time_days,
                 updated_at=ing.updated_at,
                 conversions=conversions,
             )
@@ -149,6 +159,9 @@ def create_ingredient(
         current_price=ingredient.current_price,
         yield_percent=ingredient.yield_percent,
         effective_price=service.get_effective_price(ingredient),
+        stock_qty=ingredient.stock_qty,
+        min_stock_qty=ingredient.min_stock_qty,
+        lead_time_days=ingredient.lead_time_days,
         updated_at=ingredient.updated_at,
         conversions=[],
     )
@@ -164,10 +177,12 @@ def update_ingredient(
     ingredient = db.get(Ingredient, ingredient_id)
     if ingredient is None:
         raise HTTPException(status_code=404, detail="Bahan tidak ditemukan")
-    ingredient.name = payload.name
+        ingredient.name = payload.name
     ingredient.unit = payload.unit
     ingredient.current_price = payload.current_price
     ingredient.yield_percent = payload.yield_percent
+    ingredient.min_stock_qty = payload.min_stock_qty
+    ingredient.lead_time_days = payload.lead_time_days
     db.commit()
     db.refresh(ingredient)
     conversions = db.scalars(
@@ -182,6 +197,9 @@ def update_ingredient(
         current_price=ingredient.current_price,
         yield_percent=ingredient.yield_percent,
         effective_price=service.get_effective_price(ingredient),
+        stock_qty=ingredient.stock_qty,
+        min_stock_qty=ingredient.min_stock_qty,
+        lead_time_days=ingredient.lead_time_days,
         updated_at=ingredient.updated_at,
         conversions=conversions,
     )
@@ -269,6 +287,43 @@ def record_purchase(
         current_price=ingredient.current_price,
         yield_percent=ingredient.yield_percent,
         effective_price=service.get_effective_price(ingredient),
+        stock_qty=ingredient.stock_qty,
+        min_stock_qty=ingredient.min_stock_qty,
+        lead_time_days=ingredient.lead_time_days,
+        updated_at=ingredient.updated_at,
+        conversions=conversions,
+    )
+
+
+@router.post(
+    "/ingredients/{ingredient_id}/stock-adjustment", response_model=IngredientOut
+)
+def adjust_stock(
+    ingredient_id: int,
+    payload: StockAdjustmentInput,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    ingredient = db.get(Ingredient, ingredient_id)
+    if ingredient is None:
+        raise HTTPException(status_code=404, detail="Bahan tidak ditemukan")
+    service.adjust_stock(db, ingredient, payload.new_qty, payload.reason)
+    db.refresh(ingredient)
+    conversions = db.scalars(
+        select(IngredientUnitConversion).where(
+            IngredientUnitConversion.ingredient_id == ingredient.id
+        )
+    ).all()
+    return IngredientOut(
+        id=ingredient.id,
+        name=ingredient.name,
+        unit=ingredient.unit,
+        current_price=ingredient.current_price,
+        yield_percent=ingredient.yield_percent,
+        effective_price=service.get_effective_price(ingredient),
+        stock_qty=ingredient.stock_qty,
+        min_stock_qty=ingredient.min_stock_qty,
+        lead_time_days=ingredient.lead_time_days,
         updated_at=ingredient.updated_at,
         conversions=conversions,
     )
@@ -344,6 +399,14 @@ def get_purchase_units(
     return {"options": service.get_purchase_unit_options(ingredient.unit)}
 
 
+@router.get("/unit-reference", response_model=UnitReferenceOut)
+def get_unit_reference(_: User = Depends(get_current_user)):
+    return {
+        "reference": service.UNIT_REFERENCE,
+        "groups": service.UNIT_GROUPS,
+    }
+
+
 # ---- Produk ----
 
 
@@ -356,7 +419,8 @@ def list_products(
     query = select(Product).where(Product.is_active)
     if category_id:
         query = query.where(Product.category_id == category_id)
-    return db.scalars(query).all()
+    products = db.scalars(query).all()
+    return [service.product_to_out(p) for p in products]
 
 
 @router.get("/products/{product_id}", response_model=ProductOut)
@@ -366,7 +430,7 @@ def get_product(
     product = db.get(Product, product_id)
     if product is None:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
-    return product
+    return service.product_to_out(product)
 
 
 @router.get("/products/{product_id}/cogs", response_model=ProductCogsOut)
@@ -386,11 +450,14 @@ def create_product(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    product = Product(**payload.model_dump())
+    data = payload.model_dump(exclude={"packagings"})
+    product = Product(**data)
     db.add(product)
+    db.flush()
+    service.sync_product_packagings(db, product, payload.packagings)
     db.commit()
     db.refresh(product)
-    return product
+    return service.product_to_out(product)
 
 
 @router.patch("/products/{product_id}", response_model=ProductOut)
@@ -403,11 +470,12 @@ def update_product(
     product = db.get(Product, product_id)
     if product is None:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
-    for field, value in payload.model_dump().items():
+    for field, value in payload.model_dump(exclude={"packagings"}).items():
         setattr(product, field, value)
+    service.sync_product_packagings(db, product, payload.packagings)
     db.commit()
     db.refresh(product)
-    return product
+    return service.product_to_out(product)
 
 
 @router.delete("/products/{product_id}", status_code=204)
@@ -438,18 +506,74 @@ def create_products_bulk(
                 variant_label=variant_label,
                 size_label=size.size_label,
                 weight_grams=size.weight_grams,
+                recipe_group_id=payload.recipe_group_id,
                 selling_price=size.selling_price,
                 stock_unit=size.stock_unit,
                 min_stock_qty=size.min_stock_qty,
             )
             db.add(product)
+            db.flush()
+            service.sync_product_packagings(db, product, size.packagings)
             created.append(product)
 
     db.commit()
     for product in created:
         db.refresh(product)
 
-    return created
+    return [service.product_to_out(p) for p in created]
+
+
+# ---- Kemasan & label ----
+
+
+@router.get("/packagings", response_model=list[PackagingOut])
+def list_packagings(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    return db.scalars(
+        select(Packaging).where(Packaging.is_active).order_by(Packaging.name)
+    ).all()
+
+
+@router.post("/packagings", response_model=PackagingOut)
+def create_packaging(
+    payload: PackagingCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    packaging = Packaging(**payload.model_dump())
+    db.add(packaging)
+    db.commit()
+    db.refresh(packaging)
+    return packaging
+
+
+@router.patch("/packagings/{packaging_id}", response_model=PackagingOut)
+def update_packaging(
+    packaging_id: int,
+    payload: PackagingUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    packaging = db.get(Packaging, packaging_id)
+    if packaging is None:
+        raise HTTPException(status_code=404, detail="Kemasan tidak ditemukan")
+    for field, value in payload.model_dump().items():
+        setattr(packaging, field, value)
+    db.commit()
+    db.refresh(packaging)
+    return packaging
+
+
+@router.delete("/packagings/{packaging_id}", status_code=204)
+def delete_packaging(
+    packaging_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    packaging = db.get(Packaging, packaging_id)
+    if packaging is None:
+        raise HTTPException(status_code=404, detail="Kemasan tidak ditemukan")
+    packaging.is_active = False
+    db.commit()
 
 
 # ---- Resep per level (RecipeGroup) ----
@@ -470,9 +594,7 @@ def create_recipe_group(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    existing = db.scalar(
-        select(RecipeGroup).where(RecipeGroup.name == payload.name)
-    )
+    existing = db.scalar(select(RecipeGroup).where(RecipeGroup.name == payload.name))
     if existing:
         raise HTTPException(status_code=400, detail="Nama resep sudah ada")
 
@@ -567,12 +689,15 @@ def create_recipe_version(
 def scale_recipe(
     group_id: int,
     target_grams: float,
+    production_date: date | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     from decimal import Decimal
 
-    result = service.scale_recipe(db, group_id, Decimal(str(target_grams)))
+    result = service.scale_recipe(
+        db, group_id, Decimal(str(target_grams)), production_date
+    )
     if result is None:
         raise HTTPException(status_code=400, detail="Resep ini belum punya versi aktif")
     return result

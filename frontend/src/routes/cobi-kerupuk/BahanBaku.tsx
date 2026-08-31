@@ -15,8 +15,14 @@ import {
   recordPurchase,
   updateIngredient,
   updatePurchase,
+  adjustStock,
 } from "../../lib/cobiKerupuk";
-import { formatQty, formatRupiah, parseRupiah } from "../../lib/format";
+import {
+  formatQty,
+  formatRupiah,
+  formatRupiahInput,
+  parseRupiah,
+} from "../../lib/format";
 
 const BASE_UNITS = [
   "gram",
@@ -40,12 +46,17 @@ export default function BahanBaku() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
   const [search, setSearch] = useState("");
+  const [showLowStockOnly, setShowLowStockOnly] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("info");
 
   // form info & konversi
   const [editName, setEditName] = useState("");
   const [editUnit, setEditUnit] = useState("");
   const [editYieldPercent, setEditYieldPercent] = useState("100");
+  const [editMinStock, setEditMinStock] = useState("0");
+  const [editLeadTime, setEditLeadTime] = useState("0");
+  const [newStockQty, setNewStockQty] = useState("");
+  const [stockReason, setStockReason] = useState("");
   const [newConversionUnit, setNewConversionUnit] = useState("");
   const [newConversionQty, setNewConversionQty] = useState("");
 
@@ -83,6 +94,8 @@ export default function BahanBaku() {
       setEditName(selected.name);
       setEditUnit(selected.unit);
       setEditYieldPercent(String(selected.yield_percent));
+      setEditMinStock(String(Number(selected.min_stock_qty)));
+      setEditLeadTime(String(selected.lead_time_days));
     }
   }, [selected]);
 
@@ -184,6 +197,19 @@ export default function BahanBaku() {
     },
   });
 
+  const stockAdjustMutation = useMutation({
+    mutationFn: () =>
+      adjustStock(selectedId!, {
+        new_qty: Number(newStockQty),
+        reason: stockReason || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ingredients"] });
+      setNewStockQty("");
+      setStockReason("");
+    },
+  });
+
   function resetPurchaseForm() {
     setPurchaseQty("");
     setPurchaseTotalDisplay("");
@@ -241,6 +267,8 @@ export default function BahanBaku() {
         unit: editUnit,
         current_price: selected.current_price,
         yield_percent: Number(editYieldPercent),
+        min_stock_qty: Number(editMinStock),
+        lead_time_days: Number(editLeadTime),
       },
     });
   }
@@ -259,9 +287,15 @@ export default function BahanBaku() {
     }
   }
 
-  const filtered = (ingredients ?? []).filter((i) =>
-    i.name.toLowerCase().includes(search.toLowerCase()),
-  );
+  const lowStockCount = (ingredients ?? []).filter(
+    (i) => i.stock_qty <= i.min_stock_qty,
+  ).length;
+
+  const filtered = (ingredients ?? []).filter((i) => {
+    const matchSearch = i.name.toLowerCase().includes(search.toLowerCase());
+    const matchStock = !showLowStockOnly || i.stock_qty <= i.min_stock_qty;
+    return matchSearch && matchStock;
+  });
 
   return (
     <div style={{ padding: 24, display: "flex", gap: 16 }}>
@@ -310,6 +344,40 @@ export default function BahanBaku() {
           </form>
         )}
 
+        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          <span
+            onClick={() => setShowLowStockOnly(false)}
+            className="badge"
+            style={{
+              cursor: "pointer",
+              border: "1px solid var(--color-border)",
+              background: !showLowStockOnly
+                ? "var(--color-accent-bg)"
+                : "transparent",
+              color: !showLowStockOnly
+                ? "var(--color-accent)"
+                : "var(--color-text-secondary)",
+            }}
+          >
+            Semua
+          </span>
+          <span
+            onClick={() => setShowLowStockOnly(true)}
+            className="badge"
+            style={{
+              cursor: "pointer",
+              border: "1px solid var(--color-border)",
+              background: showLowStockOnly
+                ? "var(--color-danger-bg)"
+                : "transparent",
+              color: showLowStockOnly
+                ? "var(--color-danger)"
+                : "var(--color-text-secondary)",
+            }}
+          >
+            Stok rendah {lowStockCount > 0 && `(${lowStockCount})`}
+          </span>
+        </div>
         <input
           placeholder="Cari bahan..."
           value={search}
@@ -368,8 +436,22 @@ export default function BahanBaku() {
                       selectedId === ing.id
                         ? "var(--color-accent)"
                         : "var(--color-text-muted)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
                   }}
                 >
+                  {ing.stock_qty <= ing.min_stock_qty && (
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: "var(--color-danger)",
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
                   {ing.unit}
                   {ing.yield_percent < 100 && ` · yield ${ing.yield_percent}%`}
                 </span>
@@ -399,7 +481,9 @@ export default function BahanBaku() {
                 color: "var(--color-text-muted)",
               }}
             >
-              Belum ada bahan.
+              {showLowStockOnly
+                ? "Tidak ada bahan dengan stok rendah 🎉"
+                : "Belum ada bahan."}
             </div>
           )}
         </div>
@@ -588,6 +672,68 @@ export default function BahanBaku() {
                           : "% dari berat beli yang bisa dipakai"}
                       </span>
                     </div>
+                    <label
+                      style={{
+                        fontSize: 12,
+                        color: "var(--color-text-secondary)",
+                        display: "block",
+                        marginTop: 10,
+                        marginBottom: 4,
+                      }}
+                    >
+                      Stok minimum (peringatan)
+                    </label>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 10,
+                      }}
+                    >
+                      <input
+                        value={editMinStock}
+                        onChange={(e) => setEditMinStock(e.target.value)}
+                        onBlur={handleSaveInfo}
+                        inputMode="numeric"
+                        style={{ width: 100 }}
+                      />
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          color: "var(--color-text-secondary)",
+                        }}
+                      >
+                        {selected.unit}
+                      </span>
+                    </div>
+
+                    <label
+                      style={{
+                        fontSize: 12,
+                        color: "var(--color-text-secondary)",
+                        display: "block",
+                        marginBottom: 4,
+                      }}
+                    >
+                      Lead time beli (hari)
+                    </label>
+                    <input
+                      type="number"
+                      value={editLeadTime}
+                      onChange={(e) => setEditLeadTime(e.target.value)}
+                      onBlur={handleSaveInfo}
+                      style={{ width: 100 }}
+                    />
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "var(--color-text-muted)",
+                        marginTop: 4,
+                      }}
+                    >
+                      Berapa hari dari pesan sampai bahan ini datang
+                    </div>
                   </div>
 
                   <div>
@@ -719,6 +865,103 @@ export default function BahanBaku() {
                     >
                       Rp {formatRupiah(selected.effective_price)}/
                       {selected.unit} (yield {selected.yield_percent}%)
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 20,
+                      paddingTop: 16,
+                      borderTop: "1px solid var(--color-border)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 12,
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 11.5,
+                            color: "var(--color-text-secondary)",
+                          }}
+                        >
+                          Stok saat ini
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 20,
+                            fontWeight: 500,
+                            color:
+                              selected.stock_qty <= selected.min_stock_qty
+                                ? "var(--color-danger)"
+                                : "var(--color-text-primary)",
+                          }}
+                        >
+                          {formatQty(selected.stock_qty)} {selected.unit}
+                        </div>
+                      </div>
+                      {selected.stock_qty <= selected.min_stock_qty && (
+                        <span className="badge badge-danger">
+                          Di bawah minimum
+                        </span>
+                      )}
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        alignItems: "flex-end",
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <label
+                          style={{
+                            fontSize: 11.5,
+                            color: "var(--color-text-secondary)",
+                            display: "block",
+                            marginBottom: 4,
+                          }}
+                        >
+                          Sesuaikan ke (stok opname) — {selected.unit}
+                        </label>
+                        <input
+                          value={newStockQty}
+                          onChange={(e) => setNewStockQty(e.target.value)}
+                          placeholder={String(Number(selected.stock_qty))}
+                          inputMode="numeric"
+                          style={{ width: "100%" }}
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <input
+                          value={stockReason}
+                          onChange={(e) => setStockReason(e.target.value)}
+                          placeholder="Alasan (opsional)"
+                          style={{ width: "100%" }}
+                        />
+                      </div>
+                      <button
+                        className="primary"
+                        disabled={!newStockQty || stockAdjustMutation.isPending}
+                        onClick={() => stockAdjustMutation.mutate()}
+                      >
+                        Simpan
+                      </button>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "var(--color-text-muted)",
+                        marginTop: 6,
+                      }}
+                    >
+                      Stok otomatis bertambah tiap kali "Catat Pembelian" —
+                      pakai ini cuma untuk koreksi manual (misal stok opname).
                     </div>
                   </div>
                 </div>
@@ -877,7 +1120,9 @@ export default function BahanBaku() {
                       <input
                         value={purchaseTotalDisplay}
                         onChange={(e) =>
-                          setPurchaseTotalDisplay(formatRupiah(e.target.value))
+                          setPurchaseTotalDisplay(
+                            formatRupiahInput(e.target.value),
+                          )
                         }
                         placeholder="0"
                         inputMode="numeric"

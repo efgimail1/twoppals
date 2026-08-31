@@ -23,8 +23,9 @@ class Customer(Base):
 
 class SalesOrder(Base):
     """
-    Status alur: draft -> dikonfirmasi -> siap -> selesai (atau dibatalkan kapan saja).
-    Status produksi (diproduksi, cek stok, dll) menyusul di Fase 3.
+    Status: draft -> dikonfirmasi -> diproses -> siap -> dikirim -> selesai
+    (dibatalkan bisa dari status manapun). Tidak divalidasi ketat urutannya -
+    user bebas lompat status sesuai kebutuhan bisnis riil.
     """
 
     __tablename__ = "sales_orders"
@@ -32,8 +33,8 @@ class SalesOrder(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.customers.id"))
-    order_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    due_date: Mapped[date] = mapped_column(Date)
+    order_date: Mapped[date] = mapped_column(Date)
+    due_date: Mapped[date] = mapped_column(Date)  # tanggal kirim/ambil
     status: Mapped[str] = mapped_column(String(30), default="draft")
     shipping_cost: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -43,6 +44,9 @@ class SalesOrder(Base):
     customer: Mapped["Customer"] = relationship()
     items: Mapped[list["SalesOrderItem"]] = relationship(back_populates="order", cascade="all, delete-orphan")
     payments: Mapped[list["Payment"]] = relationship(back_populates="order", cascade="all, delete-orphan")
+    status_logs: Mapped[list["OrderStatusLog"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan", order_by="OrderStatusLog.changed_at"
+    )
 
 
 class SalesOrderItem(Base):
@@ -53,7 +57,9 @@ class SalesOrderItem(Base):
     order_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.sales_orders.id"))
     product_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.products.id"))
     qty: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 2))  # snapshot harga jual saat order dibuat
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    discount_type: Mapped[str] = mapped_column(String(10), default="percent")  # percent | amount
+    discount_value: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
 
     order: Mapped["SalesOrder"] = relationship(back_populates="items")
 
@@ -66,8 +72,22 @@ class Payment(Base):
     order_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.sales_orders.id"))
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     payment_date: Mapped[date] = mapped_column(Date)
-    method: Mapped[str] = mapped_column(String(20), default="cash")  # cash | transfer | qris
+    method: Mapped[str] = mapped_column(String(20), default="cash")
     notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     order: Mapped["SalesOrder"] = relationship(back_populates="payments")
+
+
+class OrderStatusLog(Base):
+    """Jejak histori perubahan status - kapan order pindah dari status A ke B."""
+
+    __tablename__ = "order_status_logs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.sales_orders.id"))
+    status: Mapped[str] = mapped_column(String(30))
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    order: Mapped["SalesOrder"] = relationship(back_populates="status_logs")

@@ -38,6 +38,8 @@ class IngredientCreate(BaseModel):
     unit: str
     current_price: Decimal = Decimal("0")
     yield_percent: Decimal = Decimal("100")
+    min_stock_qty: Decimal = Decimal("0")
+    lead_time_days: int = 0
 
 
 class IngredientOut(BaseModel):
@@ -46,13 +48,20 @@ class IngredientOut(BaseModel):
     unit: str
     current_price: Decimal
     yield_percent: Decimal
-    effective_price: Decimal  # harga current_price / (yield%/100) - hitung COGS
+    effective_price: Decimal
+    stock_qty: Decimal
+    min_stock_qty: Decimal
+    lead_time_days: int
     updated_at: datetime
     conversions: list[IngredientUnitConversionOut] = []
 
     class Config:
         from_attributes = True
 
+
+class StockAdjustmentInput(BaseModel):
+    new_qty: Decimal
+    reason: str | None = None
 
 class PurchaseCreate(BaseModel):
     purchase_qty: Decimal
@@ -83,6 +92,21 @@ class PriceHistoryOut(BaseModel):
         from_attributes = True
 
 
+class ProductPackagingInput(BaseModel):
+    packaging_id: int
+    qty: Decimal = Decimal("1")
+
+
+class ProductPackagingOut(BaseModel):
+    id: int
+    packaging_id: int
+    packaging_name: str
+    packaging_type: str
+    unit_price: Decimal
+    qty: Decimal
+    subtotal: Decimal
+
+
 class ProductCreate(BaseModel):
     category_id: int
     name: str
@@ -93,6 +117,7 @@ class ProductCreate(BaseModel):
     selling_price: Decimal
     min_stock_qty: Decimal = Decimal("0")
     stock_unit: str = "pack"
+    packagings: list[ProductPackagingInput] = []
 
 
 class ProductUpdate(ProductCreate):
@@ -111,6 +136,7 @@ class ProductOut(BaseModel):
     stock_qty: Decimal
     min_stock_qty: Decimal
     stock_unit: str
+    packagings: list[ProductPackagingOut] = []
 
     class Config:
         from_attributes = True
@@ -122,13 +148,36 @@ class ProductSizeInput(BaseModel):
     weight_grams: Decimal | None = None
     stock_unit: str = "pack"
     min_stock_qty: Decimal = Decimal("0")
+    packagings: list[ProductPackagingInput] = []
 
 
 class ProductBulkCreate(BaseModel):
     category_id: int
     name: str
+    recipe_group_id: int | None = None
     variants: list[str] = []
     sizes: list[ProductSizeInput]
+
+
+class PackagingCreate(BaseModel):
+    name: str
+    type: str = "plastik"
+    current_price: Decimal
+
+
+class PackagingUpdate(PackagingCreate):
+    pass
+
+
+class PackagingOut(BaseModel):
+    id: int
+    name: str
+    type: str
+    current_price: Decimal
+    is_active: bool
+
+    class Config:
+        from_attributes = True
 
 
 # ---- Resep (per level, basis gram) ----
@@ -189,10 +238,15 @@ class ScaledIngredientOut(BaseModel):
     unit: str
     qty: Decimal
     subtotal: Decimal
+    stock_qty: Decimal
+    is_sufficient: bool
+    shortage_qty: Decimal
+    purchase_deadline: date | None = None
 
 
 class ScaleResponse(BaseModel):
     target_grams: Decimal
+    production_date: date | None = None
     ingredients: list[ScaledIngredientOut]
     total_cost: Decimal
 
@@ -201,6 +255,7 @@ class ProductCogsOut(BaseModel):
     product_id: int
     ingredient_cogs: Decimal | None
     overhead_per_gram: Decimal
+    packaging_cost: Decimal
     cogs_with_overhead: Decimal | None
 
 
@@ -246,3 +301,8 @@ class OverheadSummaryOut(BaseModel):
     month: str
     total_cost: Decimal
     overhead_per_gram: Decimal
+
+
+class UnitReferenceOut(BaseModel):
+    reference: dict[str, Decimal]
+    groups: dict[str, list[str]]

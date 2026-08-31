@@ -28,6 +28,9 @@ class Ingredient(Base):
     name: Mapped[str] = mapped_column(String(150))
     unit: Mapped[str] = mapped_column(String(20))
     current_price: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    stock_qty: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=Decimal("0"))
+    min_stock_qty: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=Decimal("0"))
+    lead_time_days: Mapped[int] = mapped_column(Integer, default=0)
     yield_percent: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), default=Decimal("100")
     )
@@ -122,6 +125,43 @@ class RecipeVersionIngredient(Base):
     recipe_version: Mapped["RecipeVersion"] = relationship(back_populates="ingredients")
 
 
+class Packaging(Base):
+    """
+    Katalog kemasan & label - polanya sama seperti Ingredient (reusable,
+    harga bisa berubah dari waktu ke waktu). Tidak butuh konversi satuan
+    seperti bahan baku karena selalu dihitung per pcs.
+    """
+
+    __tablename__ = "packagings"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(150))
+    type: Mapped[str] = mapped_column(
+        String(20), default="plastik"
+    )  # plastik | label | lainnya
+    current_price: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ProductPackaging(Base):
+    """
+    Baris kemasan/label yang dipakai satu Product, boleh lebih dari satu
+    (ex: 1 plastik + 1 stiker). Mirror pola RecipeVersionIngredient.
+    """
+
+    __tablename__ = "product_packagings"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.products.id"))
+    packaging_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.packagings.id"))
+    qty: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("1"))
+
+    packaging: Mapped["Packaging"] = relationship()
+
+
 class Product(Base):
     __tablename__ = "products"
     __table_args__ = {"schema": SCHEMA}
@@ -148,6 +188,9 @@ class Product(Base):
 
     category: Mapped["ProductCategory"] = relationship()
     recipe_group: Mapped["RecipeGroup | None"] = relationship()
+    packagings: Mapped[list["ProductPackaging"]] = relationship(
+        cascade="all, delete-orphan"
+    )
 
 
 class StockMovement(Base):
@@ -220,3 +263,20 @@ class OverheadItem(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
 
     overhead: Mapped["MonthlyOverhead"] = relationship(back_populates="items")
+
+
+class IngredientStockAdjustment(Base):
+    """
+    Histori penyesuaian stok manual (stok opname, susut, dll) -
+    terpisah dari histori pembelian.
+    """
+
+    __tablename__ = "ingredient_stock_adjustments"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ingredient_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.ingredients.id"))
+    qty_before: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    qty_after: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

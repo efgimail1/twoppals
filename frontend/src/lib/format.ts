@@ -1,39 +1,39 @@
 /**
- * Fungsi inti — satu-satunya tempat logika parsing angka dari backend.
- * Backend kirim Decimal sebagai string presisi (ex: "17000.00", "15000.00"),
- * jadi perlu dideteksi dulu formatnya sebelum diproses sebagai angka.
+ * Parsing angka dari BACKEND. Backend kirim Decimal sebagai teks presisi
+ * (ex: "9000.00", "17000.00") - titik di sini SELALU tanda desimal.
  */
-function parseBackendOrTypedNumber(value: number | string): number {
+function parseBackendDecimal(value: number | string): number {
   if (typeof value === "number") return Math.round(value);
-
-  const trimmed = value.trim();
-
-  // Format desimal murni dari backend: 1 titik, arbitrary digits di belakang koma
-  // (backend may send high-precision Decimal strings). Parse and round.
-  if (/^-?\d+\.\d+$/.test(trimmed)) {
-    return Math.round(parseFloat(trimmed));
-  }
-
-  // Selain itu anggap hasil ketikan/format ribuan manual (titik = pemisah ribuan)
-  return Number(trimmed.replace(/\D/g, "")) || 0;
+  const num = parseFloat(value.trim());
+  return isNaN(num) ? 0 : Math.round(num);
 }
 
 export function formatRupiah(value: number | string): string {
-  const num = parseBackendOrTypedNumber(value);
+  const num = parseBackendDecimal(value);
   if (isNaN(num)) return "";
   return new Intl.NumberFormat("id-ID").format(num);
 }
 
-export function parseRupiah(formatted: string): number {
-  return parseBackendOrTypedNumber(formatted);
-}
-
 export function formatNumber(value: number | string): string {
-  return formatRupiah(value); // logikanya identik, cuma beda nama biar jelas konteks pakainya
+  return formatRupiah(value);
 }
 
-export function parseNumber(formatted: string): number {
-  return parseRupiah(formatted);
+/**
+ * Parsing teks yang SEDANG DIKETIK USER di form. Titik di sini SELALU
+ * pemisah ribuan - aman dibuang semua.
+ */
+export function parseRupiah(typed: string): number {
+  return Number(typed.replace(/\D/g, "")) || 0;
+}
+
+export function parseNumber(typed: string): number {
+  return parseRupiah(typed);
+}
+
+export function formatRupiahInput(typed: string): string {
+  const num = parseRupiah(typed);
+  if (!num) return "";
+  return new Intl.NumberFormat("id-ID").format(num);
 }
 
 export function formatQty(value: number | string): string {

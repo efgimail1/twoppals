@@ -19,6 +19,7 @@ const SUBMENU: Record<string, { label: string; path: string }[]> = {
     { label: "Customer", path: "/cobi-kerupuk/customer" },
     { label: "Pemesanan", path: "/cobi-kerupuk/pemesanan" },
     { label: "Bahan Baku", path: "/cobi-kerupuk/bahan-baku" },
+    { label: "Kemasan & Label", path: "/cobi-kerupuk/kemasan" },
     { label: "Resep & COGS", path: "/cobi-kerupuk/resep" },
     { label: "Overhead", path: "/cobi-kerupuk/overhead" },
     { label: "Stok", path: "/cobi-kerupuk/stok" },

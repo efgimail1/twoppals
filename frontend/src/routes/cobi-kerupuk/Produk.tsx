@@ -1,27 +1,42 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Copy, Trash2 } from "lucide-react";
+import { Pencil, Copy, Trash2, X } from "lucide-react";
 import {
   Category,
+  Packaging,
   Product,
+  ProductPackagingInput,
   ProductSizeInput,
   createCategory,
   createProduct,
   createProductsBulk,
   getCategories,
+  getPackagings,
   getProducts,
   updateProduct,
   deleteProduct,
 } from "../../lib/cobiKerupuk";
 import { getRecipeGroups, RecipeGroup } from "../../lib/cobiKerupuk";
-import { formatRupiah, parseRupiah, STOCK_UNITS } from "../../lib/format";
+import {
+  formatRupiah,
+  formatRupiahInput,
+  parseRupiah,
+  STOCK_UNITS,
+} from "../../lib/format";
+
+interface PackagingLine {
+  packaging_id: string;
+  qty: string;
+}
 
 type Mode = "single" | "bulk";
 
 interface BulkSizeRow {
   size_label: string;
   priceDisplay: string;
+  weightGrams: string;
   stock_unit: string;
+  packagings: PackagingLine[];
 }
 
 export default function Produk() {
@@ -41,15 +56,28 @@ export default function Produk() {
   const [singleStockUnit, setSingleStockUnit] = useState("pack");
   const [singleWeightGrams, setSingleWeightGrams] = useState("");
   const [singleRecipeGroupId, setSingleRecipeGroupId] = useState("");
+  const [singlePackagings, setSinglePackagings] = useState<PackagingLine[]>([]);
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
 
   // ---- state form bulk ----
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [bulkName, setBulkName] = useState("");
+  const [bulkRecipeGroupId, setBulkRecipeGroupId] = useState("");
   const [bulkVariantsText, setBulkVariantsText] = useState("");
   const [bulkSizes, setBulkSizes] = useState<BulkSizeRow[]>([
-    { size_label: "", priceDisplay: "", stock_unit: "pack" },
+    {
+      size_label: "",
+      priceDisplay: "",
+      weightGrams: "",
+      stock_unit: "pack",
+      packagings: [],
+    },
   ]);
+
+  const { data: packagings } = useQuery({
+    queryKey: ["packagings"],
+    queryFn: getPackagings,
+  });
 
   const { data: categories } = useQuery({
     queryKey: ["categories"],
@@ -117,6 +145,76 @@ export default function Produk() {
     setSingleRecipeGroupId("");
     setSinglePriceDisplay("");
     setSingleStockUnit("pack");
+    setSinglePackagings([]);
+  }
+
+  function addSinglePackagingLine() {
+    if (!packagings || packagings.length === 0) return;
+    setSinglePackagings((prev) => [
+      ...prev,
+      { packaging_id: String(packagings[0].id), qty: "1" },
+    ]);
+  }
+
+  function updateSinglePackagingLine(
+    index: number,
+    field: keyof PackagingLine,
+    value: string,
+  ) {
+    setSinglePackagings((prev) =>
+      prev.map((line, i) => (i === index ? { ...line, [field]: value } : line)),
+    );
+  }
+
+  function removeSinglePackagingLine(index: number) {
+    setSinglePackagings((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function addBulkPackagingLine(sizeIndex: number) {
+    if (!packagings || packagings.length === 0) return;
+    setBulkSizes((prev) =>
+      prev.map((s, i) =>
+        i === sizeIndex
+          ? {
+              ...s,
+              packagings: [
+                ...s.packagings,
+                { packaging_id: String(packagings[0].id), qty: "1" },
+              ],
+            }
+          : s,
+      ),
+    );
+  }
+
+  function updateBulkPackagingLine(
+    sizeIndex: number,
+    lineIndex: number,
+    field: keyof PackagingLine,
+    value: string,
+  ) {
+    setBulkSizes((prev) =>
+      prev.map((s, i) =>
+        i === sizeIndex
+          ? {
+              ...s,
+              packagings: s.packagings.map((line, j) =>
+                j === lineIndex ? { ...line, [field]: value } : line,
+              ),
+            }
+          : s,
+      ),
+    );
+  }
+
+  function removeBulkPackagingLine(sizeIndex: number, lineIndex: number) {
+    setBulkSizes((prev) =>
+      prev.map((s, i) =>
+        i === sizeIndex
+          ? { ...s, packagings: s.packagings.filter((_, j) => j !== lineIndex) }
+          : s,
+      ),
+    );
   }
 
   function openEditDrawer(p: Product) {
@@ -132,6 +230,12 @@ export default function Produk() {
     );
     setSinglePriceDisplay(formatRupiah(p.selling_price));
     setSingleStockUnit(p.stock_unit);
+    setSinglePackagings(
+      p.packagings.map((pp) => ({
+        packaging_id: String(pp.packaging_id),
+        qty: String(pp.qty),
+      })),
+    );
     setDrawerOpen(true);
   }
 
@@ -144,6 +248,12 @@ export default function Produk() {
     setSingleSize(p.size_label ?? "");
     setSinglePriceDisplay(formatRupiah(p.selling_price));
     setSingleStockUnit(p.stock_unit);
+    setSinglePackagings(
+      p.packagings.map((pp) => ({
+        packaging_id: String(pp.packaging_id),
+        qty: String(pp.qty),
+      })),
+    );
     setDrawerOpen(true);
   }
 
@@ -156,8 +266,17 @@ export default function Produk() {
   function resetBulkForm() {
     setBulkCategoryId("");
     setBulkName("");
+    setBulkRecipeGroupId("");
     setBulkVariantsText("");
-    setBulkSizes([{ size_label: "", priceDisplay: "", stock_unit: "pack" }]);
+    setBulkSizes([
+      {
+        size_label: "",
+        priceDisplay: "",
+        weightGrams: "",
+        stock_unit: "pack",
+        packagings: [],
+      },
+    ]);
   }
 
   function handleAddCategory(e: React.FormEvent<HTMLFormElement>) {
@@ -179,6 +298,14 @@ export default function Produk() {
         : undefined,
       selling_price: parseRupiah(singlePriceDisplay),
       stock_unit: singleStockUnit,
+      packagings: singlePackagings
+        .filter((pl) => pl.packaging_id)
+        .map(
+          (pl): ProductPackagingInput => ({
+            packaging_id: Number(pl.packaging_id),
+            qty: Number(pl.qty) || 1,
+          }),
+        ),
     };
 
     if (editingProductId) {
@@ -200,12 +327,24 @@ export default function Produk() {
       .map((s) => ({
         size_label: s.size_label,
         selling_price: parseRupiah(s.priceDisplay),
+        weight_grams: s.weightGrams ? Number(s.weightGrams) : undefined,
         stock_unit: s.stock_unit,
+        packagings: s.packagings
+          .filter((pl) => pl.packaging_id)
+          .map(
+            (pl): ProductPackagingInput => ({
+              packaging_id: Number(pl.packaging_id),
+              qty: Number(pl.qty) || 1,
+            }),
+          ),
       }));
 
     bulkMutation.mutate({
       category_id: Number(bulkCategoryId),
       name: bulkName,
+      recipe_group_id: bulkRecipeGroupId
+        ? Number(bulkRecipeGroupId)
+        : undefined,
       variants,
       sizes,
     });
@@ -736,6 +875,79 @@ export default function Produk() {
                       marginBottom: 4,
                     }}
                   >
+                    Kemasan & label
+                  </label>
+                  <div
+                    style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                  >
+                    {singlePackagings.map((line, i) => (
+                      <div key={i} style={{ display: "flex", gap: 6 }}>
+                        <select
+                          value={line.packaging_id}
+                          onChange={(e) =>
+                            updateSinglePackagingLine(
+                              i,
+                              "packaging_id",
+                              e.target.value,
+                            )
+                          }
+                          style={{ flex: 2, minWidth: 0 }}
+                        >
+                          {packagings?.map((pk: Packaging) => (
+                            <option key={pk.id} value={pk.id}>
+                              {pk.name} (Rp {formatRupiah(pk.current_price)})
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min={1}
+                          value={line.qty}
+                          onChange={(e) =>
+                            updateSinglePackagingLine(i, "qty", e.target.value)
+                          }
+                          style={{ width: 60 }}
+                        />
+                        <button
+                          type="button"
+                          className="icon-btn danger"
+                          title="Hapus"
+                          onClick={() => removeSinglePackagingLine(i)}
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={addSinglePackagingLine}
+                      disabled={!packagings?.length}
+                    >
+                      + Tambah kemasan/label
+                    </button>
+                    {!packagings?.length && (
+                      <div
+                        style={{
+                          fontSize: 11.5,
+                          color: "var(--color-text-muted)",
+                        }}
+                      >
+                        Belum ada kemasan di katalog. Tambah dulu di menu
+                        Kemasan & Label.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    style={{
+                      fontSize: 12,
+                      color: "var(--color-text-secondary)",
+                      display: "block",
+                      marginBottom: 4,
+                    }}
+                  >
                     Harga jual
                   </label>
                   <div style={{ display: "flex", alignItems: "center" }}>
@@ -754,7 +966,7 @@ export default function Produk() {
                     <input
                       value={singlePriceDisplay}
                       onChange={(e) =>
-                        setSinglePriceDisplay(formatRupiah(e.target.value))
+                        setSinglePriceDisplay(formatRupiahInput(e.target.value))
                       }
                       placeholder="0"
                       inputMode="numeric"
@@ -852,6 +1064,32 @@ export default function Produk() {
                     required
                     style={{ width: "100%" }}
                   />
+                </div>
+
+                <div>
+                  <label
+                    style={{
+                      fontSize: 12,
+                      color: "var(--color-text-secondary)",
+                      display: "block",
+                      marginBottom: 4,
+                    }}
+                  >
+                    Resep (opsional - dipakai semua varian & ukuran di bawah,
+                    ikut skala berat masing-masing)
+                  </label>
+                  <select
+                    value={bulkRecipeGroupId}
+                    onChange={(e) => setBulkRecipeGroupId(e.target.value)}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="">Tanpa resep</option>
+                    {recipeGroups?.map((g: RecipeGroup) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
@@ -965,7 +1203,7 @@ export default function Produk() {
                                   idx === i
                                     ? {
                                         ...s,
-                                        priceDisplay: formatRupiah(
+                                        priceDisplay: formatRupiahInput(
                                           e.target.value,
                                         ),
                                       }
@@ -1001,6 +1239,96 @@ export default function Produk() {
                           ))}
                         </select>
                       </div>
+
+                      <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                        <input
+                          type="number"
+                          placeholder="Berat (gram, opsional - untuk skala COGS)"
+                          value={size.weightGrams}
+                          onChange={(e) =>
+                            setBulkSizes((prev) =>
+                              prev.map((s, idx) =>
+                                idx === i
+                                  ? { ...s, weightGrams: e.target.value }
+                                  : s,
+                              ),
+                            )
+                          }
+                          style={{ width: "100%" }}
+                        />
+                      </div>
+
+                      <div style={{ marginTop: 8 }}>
+                        <div
+                          style={{
+                            fontSize: 11.5,
+                            color: "var(--color-text-secondary)",
+                            marginBottom: 4,
+                          }}
+                        >
+                          Kemasan & label ukuran ini
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 6,
+                          }}
+                        >
+                          {size.packagings.map((line, j) => (
+                            <div key={j} style={{ display: "flex", gap: 6 }}>
+                              <select
+                                value={line.packaging_id}
+                                onChange={(e) =>
+                                  updateBulkPackagingLine(
+                                    i,
+                                    j,
+                                    "packaging_id",
+                                    e.target.value,
+                                  )
+                                }
+                                style={{ flex: 2, minWidth: 0 }}
+                              >
+                                {packagings?.map((pk: Packaging) => (
+                                  <option key={pk.id} value={pk.id}>
+                                    {pk.name} (Rp{" "}
+                                    {formatRupiah(pk.current_price)})
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                type="number"
+                                min={1}
+                                value={line.qty}
+                                onChange={(e) =>
+                                  updateBulkPackagingLine(
+                                    i,
+                                    j,
+                                    "qty",
+                                    e.target.value,
+                                  )
+                                }
+                                style={{ width: 60 }}
+                              />
+                              <button
+                                type="button"
+                                className="icon-btn danger"
+                                title="Hapus"
+                                onClick={() => removeBulkPackagingLine(i, j)}
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => addBulkPackagingLine(i)}
+                            disabled={!packagings?.length}
+                          >
+                            + Tambah kemasan/label
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   ))}
                   <button
@@ -1011,7 +1339,9 @@ export default function Produk() {
                         {
                           size_label: "",
                           priceDisplay: "",
+                          weightGrams: "",
                           stock_unit: "pack",
+                          packagings: [],
                         },
                       ])
                     }

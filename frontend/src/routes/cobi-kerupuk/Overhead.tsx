@@ -11,6 +11,7 @@ import {
 import {
   formatNumber,
   formatRupiah,
+  formatRupiahInput,
   parseNumber,
   parseRupiah,
 } from "../../lib/format";
@@ -139,7 +140,7 @@ export default function OverheadPage() {
         i === index
           ? {
               ...item,
-              [field]: field === "amountDisplay" ? formatRupiah(value) : value,
+              [field]: field === "amountDisplay" ? formatRupiahInput(value) : value,
             }
           : item,
       ),
@@ -472,7 +473,7 @@ export default function OverheadPage() {
           >
             <input
               value={production}
-              onChange={(e) => setProduction(formatNumber(e.target.value))}
+              onChange={(e) => setProduction(formatRupiahInput(e.target.value))}
               placeholder="0"
               inputMode="numeric"
               style={{ flex: 1, textAlign: "right" }}

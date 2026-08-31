@@ -189,3 +189,5 @@ logs/
 *.bak
 *.tmp
 .cache/
+Data twoppals.docx
+Notes.docx

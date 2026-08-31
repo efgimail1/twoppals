@@ -1,5 +1,5 @@
 from decimal import Decimal
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.cobi_kerupuk.models import (
@@ -9,11 +9,12 @@ from app.cobi_kerupuk.models import (
     MonthlyOverhead,
     OverheadItem,
     Product,
+    ProductPackaging,
     RecipeGroup,
     RecipeVersion,
     RecipeVersionIngredient,
 )
-from app.cobi_kerupuk.schemas import RecipeVersionCreate
+from app.cobi_kerupuk.schemas import ProductPackagingInput, RecipeVersionCreate
 
 
 # Nilai tiap satuan relatif terhadap satuan terkecil di grupnya.
@@ -144,6 +145,7 @@ def record_purchase(
 
     price_per_base = total_price / qty_in_base
     ingredient.current_price = price_per_base
+    ingredient.stock_qty = ingredient.stock_qty + qty_in_base
     ingredient.updated_at = datetime.utcnow()
 
     recorded_at = (
@@ -163,6 +165,28 @@ def record_purchase(
             recorded_at=recorded_at,
         )
     )
+    db.commit()
+
+
+def adjust_stock(
+    db: Session, ingredient: Ingredient, new_qty: Decimal, reason: str | None
+) -> None:
+    """
+    Set stok ke angka baru (hasil stok opname/koreksi) -
+    dicatat sebagai histori penyesuaian.
+    """
+    from app.cobi_kerupuk.models import IngredientStockAdjustment
+
+    db.add(
+        IngredientStockAdjustment(
+            ingredient_id=ingredient.id,
+            qty_before=ingredient.stock_qty,
+            qty_after=new_qty,
+            reason=reason,
+        )
+    )
+    ingredient.stock_qty = new_qty
+    ingredient.updated_at = datetime.utcnow()
     db.commit()
 
 
@@ -240,6 +264,72 @@ def overhead_to_out(overhead: MonthlyOverhead) -> dict:
     }
 
 
+def product_to_out(product: Product) -> dict:
+    """
+    ProductOut butuh nama & harga kemasan (bukan cuma packaging_id), jadi
+    tidak bisa diserialisasi langsung dari objek ORM Product apa adanya -
+    perlu digabung manual dari relasi packaging di tiap baris.
+    """
+    return {
+        "id": product.id,
+        "category_id": product.category_id,
+        "name": product.name,
+        "variant_label": product.variant_label,
+        "size_label": product.size_label,
+        "weight_grams": product.weight_grams,
+        "recipe_group_id": product.recipe_group_id,
+        "selling_price": product.selling_price,
+        "stock_qty": product.stock_qty,
+        "min_stock_qty": product.min_stock_qty,
+        "stock_unit": product.stock_unit,
+        "packagings": [
+            {
+                "id": pp.id,
+                "packaging_id": pp.packaging_id,
+                "packaging_name": pp.packaging.name,
+                "packaging_type": pp.packaging.type,
+                "unit_price": pp.packaging.current_price,
+                "qty": pp.qty,
+                "subtotal": pp.qty * pp.packaging.current_price,
+            }
+            for pp in product.packagings
+        ],
+    }
+
+
+def get_packaging_cost(product: Product) -> Decimal:
+    """
+    Total biaya kemasan+label per pcs produk ini - FLAT, tidak ikut
+    skala berat (plastik kecil tidak otomatis lebih murah proporsional
+    terhadap gramnya dibanding plastik besar).
+    """
+    return sum(
+        (pp.qty * pp.packaging.current_price for pp in product.packagings),
+        Decimal("0"),
+    )
+
+
+def sync_product_packagings(
+    db: Session, product: Product, packagings: list[ProductPackagingInput]
+) -> None:
+    """
+    Ganti seluruh baris kemasan produk ini dengan daftar baru (hapus lalu
+    buat ulang) - polanya sama seperti create_recipe_version mengganti
+    daftar bahan per versi.
+    """
+    for existing in list(product.packagings):
+        db.delete(existing)
+    db.flush()
+    for item in packagings:
+        db.add(
+            ProductPackaging(
+                product_id=product.id,
+                packaging_id=item.packaging_id,
+                qty=item.qty,
+            )
+        )
+
+
 def get_product_cogs(db: Session, product: Product) -> dict:
     ingredient_cogs = None
     if product.recipe_group_id is not None and product.weight_grams is not None:
@@ -255,13 +345,18 @@ def get_product_cogs(db: Session, product: Product) -> dict:
         total = sum((i.amount for i in overhead.items), Decimal("0"))
         overhead_per_gram = total / overhead.estimated_production_grams
 
+    packaging_cost = get_packaging_cost(product)
+
     cogs_with_overhead = None
     if ingredient_cogs is not None and product.weight_grams is not None:
-        cogs_with_overhead = ingredient_cogs + overhead_per_gram * product.weight_grams
+        cogs_with_overhead = (
+            ingredient_cogs + overhead_per_gram * product.weight_grams + packaging_cost
+        )
 
     return {
         "ingredient_cogs": ingredient_cogs,
         "overhead_per_gram": overhead_per_gram,
+        "packaging_cost": packaging_cost,
         "cogs_with_overhead": cogs_with_overhead,
     }
 
@@ -360,13 +455,11 @@ def get_recipe_version_detail(db: Session, version_id: int) -> dict | None:
 
 
 def scale_recipe(
-    db: Session, recipe_group_id: int, target_grams: Decimal
+    db: Session,
+    recipe_group_id: int,
+    target_grams: Decimal,
+    production_date: date | None = None,
 ) -> dict | None:
-    """
-    Kalkulator skala produksi -
-    tidak terikat produk manapun, murni buat perencanaan.
-    """
-
     group = db.get(RecipeGroup, recipe_group_id)
     if group is None or group.active_version_id is None:
         return None
@@ -374,20 +467,44 @@ def scale_recipe(
     detail = get_recipe_version_detail(db, group.active_version_id)
     ratio = target_grams / group.base_yield_grams
 
-    scaled_ingredients = [
-        {
-            "ingredient_id": ing["ingredient_id"],
-            "ingredient_name": ing["ingredient_name"],
-            "unit": ing["unit"],
-            "qty": ing["qty"] * ratio,
-            "subtotal": ing["subtotal"] * ratio,
-        }
-        for ing in detail["ingredients"]
-    ]
+    scaled_ingredients = []
+    for ing in detail["ingredients"]:
+        needed_qty = ing["qty"] * ratio
+        ingredient = db.get(Ingredient, ing["ingredient_id"])
+        stock_qty = ingredient.stock_qty if ingredient else Decimal("0")
+        is_sufficient = stock_qty >= needed_qty
+        shortage_qty = Decimal("0") if is_sufficient else needed_qty - stock_qty
+
+        purchase_deadline = None
+        if (
+            not is_sufficient
+            and production_date
+            and ingredient
+            and ingredient.lead_time_days
+        ):
+            purchase_deadline = production_date - timedelta(
+                days=ingredient.lead_time_days
+            )
+
+        scaled_ingredients.append(
+            {
+                "ingredient_id": ing["ingredient_id"],
+                "ingredient_name": ing["ingredient_name"],
+                "unit": ing["unit"],
+                "qty": needed_qty,
+                "subtotal": ing["subtotal"] * ratio,
+                "stock_qty": stock_qty,
+                "is_sufficient": is_sufficient,
+                "shortage_qty": shortage_qty,
+                "purchase_deadline": purchase_deadline,
+            }
+        )
+
     total_cost = detail["total_cogs_snapshot"] * ratio
 
     return {
         "target_grams": target_grams,
+        "production_date": production_date,
         "ingredients": scaled_ingredients,
         "total_cost": total_cost,
     }
@@ -426,14 +543,22 @@ def update_purchase_history(
     brand: str | None = None,
 ) -> None:
     ingredient = db.get(Ingredient, history.ingredient_id)
-    qty_in_base = convert_to_base_unit(ingredient.unit, purchase_unit, purchase_qty)
-    if qty_in_base <= 0:
+
+    # 1. Balikin dulu stok yang lama (dari qty sebelum diedit)
+    if history.price and history.price > 0:
+        old_qty_in_base = history.total_price / history.price
+        ingredient.stock_qty = ingredient.stock_qty - old_qty_in_base
+
+    # 2. Hitung qty baru & tambahkan lagi ke stok
+    new_qty_in_base = convert_to_base_unit(ingredient.unit, purchase_unit, purchase_qty)
+    if new_qty_in_base <= 0:
         raise ValueError("Jumlah beli harus lebih dari 0")
+    ingredient.stock_qty = ingredient.stock_qty + new_qty_in_base
 
     history.purchase_qty = purchase_qty
     history.purchase_unit = purchase_unit
     history.total_price = total_price
-    history.price = total_price / qty_in_base
+    history.price = total_price / new_qty_in_base
     history.brand = brand
     if purchase_date:
         history.recorded_at = datetime.combine(purchase_date, datetime.min.time())
@@ -444,6 +569,13 @@ def update_purchase_history(
 
 def delete_purchase_history(db: Session, history: IngredientPriceHistory) -> None:
     ingredient = db.get(Ingredient, history.ingredient_id)
+
+    # qty yang dulu ditambahkan ke stok = total_price / price
+    # (price = harga per satuan dasar)
+    if history.price and history.price > 0:
+        qty_in_base_added = history.total_price / history.price
+        ingredient.stock_qty = ingredient.stock_qty - qty_in_base_added
+
     db.delete(history)
     db.commit()
     recompute_current_price(db, ingredient)
