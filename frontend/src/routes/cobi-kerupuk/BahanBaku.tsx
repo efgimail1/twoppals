@@ -288,12 +288,13 @@ export default function BahanBaku() {
   }
 
   const lowStockCount = (ingredients ?? []).filter(
-    (i) => i.stock_qty <= i.min_stock_qty,
+    (i) => Number(i.stock_qty) <= Number(i.min_stock_qty),
   ).length;
 
   const filtered = (ingredients ?? []).filter((i) => {
     const matchSearch = i.name.toLowerCase().includes(search.toLowerCase());
-    const matchStock = !showLowStockOnly || i.stock_qty <= i.min_stock_qty;
+    const matchStock =
+      !showLowStockOnly || Number(i.stock_qty) <= Number(i.min_stock_qty);
     return matchSearch && matchStock;
   });
 
@@ -441,7 +442,7 @@ export default function BahanBaku() {
                     gap: 4,
                   }}
                 >
-                  {ing.stock_qty <= ing.min_stock_qty && (
+                  {Number(ing.stock_qty) <= Number(ing.min_stock_qty) && (
                     <span
                       style={{
                         width: 6,
@@ -896,7 +897,8 @@ export default function BahanBaku() {
                             fontSize: 20,
                             fontWeight: 500,
                             color:
-                              selected.stock_qty <= selected.min_stock_qty
+                              Number(selected.stock_qty) <=
+                              Number(selected.min_stock_qty)
                                 ? "var(--color-danger)"
                                 : "var(--color-text-primary)",
                           }}
@@ -904,7 +906,8 @@ export default function BahanBaku() {
                           {formatQty(selected.stock_qty)} {selected.unit}
                         </div>
                       </div>
-                      {selected.stock_qty <= selected.min_stock_qty && (
+                      {Number(selected.stock_qty) <=
+                        Number(selected.min_stock_qty) && (
                         <span className="badge badge-danger">
                           Di bawah minimum
                         </span>

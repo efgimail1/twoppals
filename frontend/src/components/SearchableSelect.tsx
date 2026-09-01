@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Search } from "lucide-react";
 
 export interface SearchableOption {
   value: number;
@@ -17,6 +18,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = options.find((o) => o.value === value);
 
@@ -35,6 +37,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
   return (
     <div ref={containerRef} style={{ position: "relative" }}>
       <input
+        ref={inputRef}
         value={open ? query : selected?.label ?? ""}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -45,8 +48,31 @@ export default function SearchableSelect({ options, value, onChange, placeholder
           setOpen(true);
         }}
         placeholder={placeholder ?? "Cari..."}
-        style={{ width: "100%" }}
+        style={{ width: "100%", paddingRight: 34 }}
       />
+      <button
+        type="button"
+        onClick={() => {
+          setQuery("");
+          setOpen(true);
+          inputRef.current?.focus();
+        }}
+        style={{
+          position: "absolute",
+          right: 6,
+          top: "50%",
+          transform: "translateY(-50%)",
+          border: "none",
+          background: "transparent",
+          padding: 4,
+          cursor: "pointer",
+          display: "flex",
+          color: "var(--color-text-muted)",
+        }}
+        tabIndex={-1}
+      >
+        <Search size={14} />
+      </button>
       {open && (
         <div
           style={{
