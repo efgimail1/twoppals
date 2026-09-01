@@ -191,3 +191,4 @@ logs/
 .cache/
 Data twoppals.docx
 Notes.docx
+~$*.docx
